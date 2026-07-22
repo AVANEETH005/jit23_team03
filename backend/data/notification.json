@@ -1,0 +1,35 @@
+[
+  {
+    "_id": "xt6ak1lsh",
+    "createdAt": "2026-07-18T07:37:22.646Z",
+    "updatedAt": "2026-07-18T07:37:22.646Z",
+    "type": "low_stock",
+    "title": "Low Stock Alert",
+    "message": "The product \"MacBook Pro 16\" (SKU: MAC-PRO-16) is low on stock (5 remaining) in branch \"Branch A - Downtown Hub\".",
+    "branchId": "szoh0fp1r",
+    "companyId": "s6rpjur8w",
+    "referenceId": "4jey5byzw"
+  },
+  {
+    "_id": "rkwzndvre",
+    "createdAt": "2026-07-18T07:37:22.647Z",
+    "updatedAt": "2026-07-18T07:37:22.647Z",
+    "type": "out_of_stock",
+    "title": "Product Out of Stock",
+    "message": "The product \"iPhone 15 Pro\" (SKU: IPHONE-15) is completely out of stock in branch \"Branch A - Downtown Hub\".",
+    "branchId": "szoh0fp1r",
+    "companyId": "s6rpjur8w",
+    "referenceId": "u0ws34opn"
+  },
+  {
+    "_id": "svqb75n0a",
+    "createdAt": "2026-07-18T07:37:22.673Z",
+    "updatedAt": "2026-07-18T07:37:22.673Z",
+    "type": "expiry_soon",
+    "title": "Product Expiring Soon",
+    "message": "The product \"Paracetamol 500mg\" (SKU: PARA-500) expires soon on 23/7/2026 (5 days left) in branch \"Branch A - Downtown Hub\".",
+    "branchId": "szoh0fp1r",
+    "companyId": "s6rpjur8w",
+    "referenceId": "ee9h1ffet"
+  }
+]

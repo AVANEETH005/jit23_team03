@@ -1,0 +1,57 @@
+[
+  {
+    "_id": "dz1jjjqog",
+    "createdAt": "2026-07-18T07:37:22.168Z",
+    "updatedAt": "2026-07-18T07:37:22.168Z",
+    "name": "Sarah Jenkins",
+    "email": "admin@smartstock.com",
+    "password": "$2a$10$GMoKtXpaB27NcKIt4XbRruiLu2b8widycRi0KLZuveJTlJ8mBLPNC",
+    "role": "admin",
+    "companyId": "s6rpjur8w",
+    "branchId": "z4l3wz85t"
+  },
+  {
+    "_id": "igk9w62ke",
+    "createdAt": "2026-07-18T07:37:22.275Z",
+    "updatedAt": "2026-07-18T07:37:22.275Z",
+    "name": "Marcus Vance",
+    "email": "manager@smartstock.com",
+    "password": "$2a$10$DMM/iS.SkY5agFweZU3Xz.3wiEpT7xc7.tm/M/ANBE4J4/e9Q8.My",
+    "role": "manager",
+    "companyId": "s6rpjur8w",
+    "branchId": "z4l3wz85t"
+  },
+  {
+    "_id": "0wy5xxq5r",
+    "createdAt": "2026-07-18T07:37:22.383Z",
+    "updatedAt": "2026-07-18T07:37:22.383Z",
+    "name": "James Carter",
+    "email": "staff@smartstock.com",
+    "password": "$2a$10$3p0TjpyJy6BeD5xGVcl1XeNkb8aaKZXVn3dkWVL9InOQ.hJKAQfOS",
+    "role": "staff",
+    "companyId": "s6rpjur8w",
+    "branchId": "szoh0fp1r"
+  },
+  {
+    "_id": "7xewjnial",
+    "createdAt": "2026-07-18T07:37:22.490Z",
+    "updatedAt": "2026-07-18T07:37:22.490Z",
+    "name": "Elena Rostova",
+    "email": "branch@smartstock.com",
+    "password": "$2a$10$Jamm/f62M0zE1Wf5fKHorOCWQPMM00fB6uPzpRKzqIJJZkQeJb6Ra",
+    "role": "branch_user",
+    "companyId": "s6rpjur8w",
+    "branchId": "szoh0fp1r"
+  },
+  {
+    "_id": "kp3hny2i7",
+    "createdAt": "2026-07-18T07:37:22.599Z",
+    "updatedAt": "2026-07-18T07:37:22.599Z",
+    "name": "Tom Bradley",
+    "email": "partner@apex.com",
+    "password": "$2a$10$IewaDhmfi42HEeJe2.KGLegjhCc46TwnqRy/nmk7eyKh8sydTq5ca",
+    "role": "admin",
+    "companyId": "3pf92gwhi",
+    "branchId": "suyq5i8yc"
+  }
+]

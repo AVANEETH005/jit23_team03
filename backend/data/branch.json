@@ -1,0 +1,47 @@
+[
+  {
+    "_id": "z4l3wz85t",
+    "createdAt": "2026-07-18T07:37:22.040Z",
+    "updatedAt": "2026-07-18T07:37:22.040Z",
+    "name": "Main Warehouse",
+    "address": "100 Innovation Way (Loading Dock A)",
+    "companyId": "s6rpjur8w",
+    "isWarehouse": true
+  },
+  {
+    "_id": "szoh0fp1r",
+    "createdAt": "2026-07-18T07:37:22.040Z",
+    "updatedAt": "2026-07-18T07:37:22.040Z",
+    "name": "Branch A - Downtown Hub",
+    "address": "25 Main Street, Suite 101",
+    "companyId": "s6rpjur8w",
+    "isWarehouse": false
+  },
+  {
+    "_id": "ctutskf9o",
+    "createdAt": "2026-07-18T07:37:22.041Z",
+    "updatedAt": "2026-07-18T07:37:22.041Z",
+    "name": "Branch B - Westside Depot",
+    "address": "880 Industrial Avenue",
+    "companyId": "s6rpjur8w",
+    "isWarehouse": false
+  },
+  {
+    "_id": "suyq5i8yc",
+    "createdAt": "2026-07-18T07:37:22.041Z",
+    "updatedAt": "2026-07-18T07:37:22.041Z",
+    "name": "Apex Central Hub",
+    "address": "45 Commerce Boulevard (Dock B)",
+    "companyId": "3pf92gwhi",
+    "isWarehouse": true
+  },
+  {
+    "_id": "jdo2mkktj",
+    "createdAt": "2026-07-18T07:37:22.042Z",
+    "updatedAt": "2026-07-18T07:37:22.042Z",
+    "name": "Apex Store 1",
+    "address": "90 Plaza Boulevard",
+    "companyId": "3pf92gwhi",
+    "isWarehouse": false
+  }
+]

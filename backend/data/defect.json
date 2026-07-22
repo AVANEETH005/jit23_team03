@@ -1,0 +1,26 @@
+[
+  {
+    "_id": "n1tfpoz5r",
+    "createdAt": "2026-07-18T07:37:22.634Z",
+    "updatedAt": "2026-07-18T07:37:22.634Z",
+    "productId": "4jey5byzw",
+    "branchId": "szoh0fp1r",
+    "quantity": 1,
+    "reason": "Damaged",
+    "status": "Pending Review",
+    "reportedBy": "James Carter",
+    "notes": "Screen crack detected during unpack inspection."
+  },
+  {
+    "_id": "a01bg6tu8",
+    "createdAt": "2026-07-18T07:37:22.637Z",
+    "updatedAt": "2026-07-18T07:37:22.637Z",
+    "productId": "ee9h1ffet",
+    "branchId": "szoh0fp1r",
+    "quantity": 5,
+    "reason": "Packaging Issue",
+    "status": "Stock Adjusted",
+    "reportedBy": "Elena Rostova",
+    "notes": "Inner seal broken on delivery. Removed from sellable stock."
+  }
+]

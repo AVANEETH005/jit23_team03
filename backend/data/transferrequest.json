@@ -1,0 +1,20 @@
+[
+  {
+    "_id": "bxwfqi1b4",
+    "createdAt": "2026-07-18T07:37:22.645Z",
+    "updatedAt": "2026-07-18T07:37:22.645Z",
+    "type": "company_exchange",
+    "requestType": "partner_exchange",
+    "sourceCompanyId": "3pf92gwhi",
+    "sourceBranchId": "suyq5i8yc",
+    "targetCompanyId": "s6rpjur8w",
+    "targetBranchId": "z4l3wz85t",
+    "productId": "e2ffsglxj",
+    "productName": "Samsung S24 Ultra",
+    "productSku": "SAMP-S24",
+    "quantity": 5,
+    "status": "pending",
+    "requestedBy": "Sarah Jenkins",
+    "notes": "Urgent exchange request: Customer waiting at Main Warehouse."
+  }
+]

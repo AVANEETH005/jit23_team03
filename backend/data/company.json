@@ -1,0 +1,22 @@
+[
+  {
+    "_id": "s6rpjur8w",
+    "createdAt": "2026-07-18T07:37:22.033Z",
+    "updatedAt": "2026-07-18T07:37:22.034Z",
+    "name": "Smart Logistics Inc",
+    "code": "SLI2026",
+    "industry": "Electronics & Medical Supplies Distribution",
+    "address": "100 Innovation Way, Tech District",
+    "phone": "+1-555-0199"
+  },
+  {
+    "_id": "3pf92gwhi",
+    "createdAt": "2026-07-18T07:37:22.038Z",
+    "updatedAt": "2026-07-18T07:37:22.039Z",
+    "name": "Apex Retail Group",
+    "code": "ARG2026",
+    "industry": "Partner Retail Exchanges",
+    "address": "45 Commerce Boulevard, Suite B",
+    "phone": "+1-555-0144"
+  }
+]

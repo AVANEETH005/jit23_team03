@@ -7,6 +7,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import MainLayout from './components/MainLayout';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import Forecasting from './pages/Forecasting';
@@ -24,7 +25,8 @@ function App() {
         <NotificationProvider>
           <Router>
             <Routes>
-              {/* Public Auth Routes */}
+              {/* Public Landing & Auth Routes */}
+              <Route path="/home" element={<Home />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
 

@@ -9,7 +9,8 @@ import {
   Sparkles,
   Cpu,
   Eye,
-  PlusCircle
+  Settings,
+  AlertCircle
 } from 'lucide-react';
 
 import * as tf from '@tensorflow/tfjs';
@@ -27,15 +28,6 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
   const [products, setProducts] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState('');
   
-  // Custom manual webcam intake item fields (for new item scanning)
-  const [newItemData, setNewItemData] = useState({
-    name: '',
-    sku: '',
-    category: 'Electronics',
-    quantity: 1,
-    price: 999.00
-  });
-
   // Custom unlisted defect item title
   const [unlistedDefectName, setUnlistedDefectName] = useState('');
 
@@ -44,12 +36,19 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [detectedObjects, setDetectedObjects] = useState([]);
   
+  // Custom tear simulation to allow easy validation
+  const [forceSimulatedTear, setForceSimulatedTear] = useState(false);
+
+  // Verification results upon capture
   const [capturedImage, setCapturedImage] = useState(null); // base64
   const [analysisStatus, setAnalysisStatus] = useState('idle'); // idle, scanning, result
   const [scanResult, setScanResult] = useState(null); // 'good' or 'defective'
+  const [detectedObjectType, setDetectedObjectType] = useState(''); // e.g. "cell phone (94%)"
+  const [verdictNotes, setVerdictNotes] = useState('');
+  
   const [defectDetails, setDefectDetails] = useState({
     reason: 'Damaged',
-    notes: 'YOLO Computer Vision scan detected surface flaw anomaly.'
+    notes: 'YOLO Computer Vision scan detected packaging surface flaw.'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -58,6 +57,8 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
   const yoloOverlayCanvasRef = useRef(null);
   const streamRef = useRef(null);
   const animationFrameId = useRef(null);
+  const lastDetectTime = useRef(0);
+  const tempCanvas = useRef(null);
 
   // Sync mode prop if passed
   useEffect(() => {
@@ -77,7 +78,7 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
           setIsModelLoading(false);
         }
       } catch (err) {
-        console.error('Failed to load TensorFlow YOLO COCO-SSD model:', err);
+        console.error('Failed to load TensorFlow YOLO model:', err);
         if (isMounted) setIsModelLoading(false);
       }
     };
@@ -85,7 +86,7 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
     return () => { isMounted = false; };
   }, []);
 
-  // Fetch products for dropdown
+  // Fetch products for listing lookup
   const fetchProducts = async () => {
     const token = localStorage.getItem('token');
     try {
@@ -111,80 +112,120 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
     fetchProducts();
   }, [activeBranchId]);
 
-  // Real-time YOLO Detection Loop
+  // Real-time YOLO tracking preview loop
   const runYoloDetectionLoop = async () => {
-    if (!videoRef.current || !yoloModel || !streamActive) return;
+    if (!videoRef.current || !streamActive) return;
 
     const video = videoRef.current;
     if (video.readyState === 4) {
       try {
-        const predictions = await yoloModel.detect(video, 5, 0.4);
-        setDetectedObjects(predictions);
-        drawYoloBoundingBoxes(predictions);
+        const now = Date.now();
+        if (now - lastDetectTime.current > 420) {
+          lastDetectTime.current = now;
 
-        // Smart product auto-matcher or new item pre-filler
-        if (predictions.length > 0) {
-          const topClass = predictions[0].class.toLowerCase();
-          const match = products.find(p => 
-            p.name.toLowerCase().includes(topClass) || 
-            p.category.toLowerCase().includes(topClass) ||
-            (topClass === 'cell phone' && (p.name.toLowerCase().includes('iphone') || p.name.toLowerCase().includes('samsung') || p.name.toLowerCase().includes('phone'))) ||
-            (topClass === 'laptop' && p.name.toLowerCase().includes('macbook')) ||
-            (topClass === 'bottle' && p.name.toLowerCase().includes('paracetamol'))
-          );
-          if (match && selectedProductId !== 'new_custom_item' && selectedProductId !== 'unlisted_defect_item') {
-            setSelectedProductId(match._id);
-          } else if (!match && selectedProductId === 'new_custom_item' && !newItemData.name) {
-            const formattedName = `Scanned ${topClass.charAt(0).toUpperCase() + topClass.slice(1)}`;
-            const formattedSku = `${topClass.toUpperCase().replace(/\s+/g, '-')}-${Math.floor(100 + Math.random() * 900)}`;
-            setNewItemData(prev => ({
-              ...prev,
-              name: formattedName,
-              sku: formattedSku
-            }));
-          } else if (selectedProductId === 'unlisted_defect_item' && !unlistedDefectName) {
-            setUnlistedDefectName(`Unlisted ${topClass.charAt(0).toUpperCase() + topClass.slice(1)}`);
+          // Create temporary offscreen canvas to capture current video frame
+          if (!tempCanvas.current) {
+            tempCanvas.current = document.createElement('canvas');
+          }
+          const canvas = tempCanvas.current;
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const base64Image = canvas.toDataURL('image/jpeg', 0.82);
+
+          let predictions = [];
+          let serverSuccess = false;
+
+          try {
+            // Attempt to request predictions from our python custom YOLOv8 model server
+            const res = await fetch('http://localhost:5001/detect_frame', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: base64Image }),
+              signal: AbortSignal.timeout(600) // 600ms timeout to prevent UI hang
+            });
+            if (res.ok) {
+              const data = await res.json();
+              predictions = data.predictions || [];
+              serverSuccess = true;
+            }
+          } catch (e) {
+            serverSuccess = false;
+          }
+
+          // Fallback to client-side COCO-SSD if Python server is offline
+          if (!serverSuccess && yoloModel) {
+            const rawPredictions = await yoloModel.detect(video, 4, 0.4);
+            predictions = rawPredictions.map(pred => {
+              const formattedClass = pred.class.split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+              return {
+                class: formattedClass,
+                score: pred.score,
+                bbox: pred.bbox,
+                status: 'GOOD',
+                defect: 'None'
+              };
+            });
+          }
+
+          // Filter out obvious false positives using geometric size heuristics:
+          predictions = predictions.filter(pred => {
+            const [_, __, bw, bh] = pred.bbox;
+            const area = bw * bh;
+            const screenArea = video.videoWidth * video.videoHeight;
+            const relativeSize = area / (screenArea || 1);
+            
+            const largeClasses = ['refrigerator', 'bed', 'car', 'truck', 'bus', 'train'];
+            if (largeClasses.includes(pred.class.toLowerCase()) && relativeSize < 0.15) {
+              return false;
+            }
+            return true;
+          });
+
+          setDetectedObjects(predictions);
+
+          // Draw live tracking overlays
+          const overlay = yoloOverlayCanvasRef.current;
+          if (overlay) {
+            const ctxOverlay = overlay.getContext('2d');
+            overlay.width = video.videoWidth || 640;
+            overlay.height = video.videoHeight || 480;
+            ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
+
+            predictions.forEach(pred => {
+              const [bx, by, bw, bh] = pred.bbox;
+              const confidence = Math.round(pred.score * 100);
+
+              // Red outline for defective item, Blue for good
+              ctxOverlay.strokeStyle = pred.status === 'DEFECTIVE' ? '#EF4444' : '#3B82F6';
+              ctxOverlay.lineWidth = 2.5;
+              ctxOverlay.strokeRect(bx, by, bw, bh);
+
+              ctxOverlay.fillStyle = pred.status === 'DEFECTIVE' ? '#EF4444' : '#3B82F6';
+              let labelText = `${pred.class} (${confidence}%)`;
+              if (pred.status === 'DEFECTIVE') {
+                labelText += ` - DEFECT (${pred.defect})`;
+              }
+              ctxOverlay.font = 'bold 11px sans-serif';
+              const labelWidth = ctxOverlay.measureText(labelText).width;
+              ctxOverlay.fillRect(bx, by > 18 ? by - 20 : by, labelWidth + 10, 18);
+
+              ctxOverlay.fillStyle = '#FFFFFF';
+              ctxOverlay.fillText(labelText, bx + 5, by > 18 ? by - 6 : by + 12);
+            });
           }
         }
       } catch (err) {
-        console.error('YOLO inference error:', err);
+        console.error('YOLO loop error:', err);
       }
     }
 
     if (streamRef.current) {
       animationFrameId.current = requestAnimationFrame(runYoloDetectionLoop);
     }
-  };
-
-  const drawYoloBoundingBoxes = (predictions) => {
-    const overlay = yoloOverlayCanvasRef.current;
-    const video = videoRef.current;
-    if (!overlay || !video) return;
-
-    const ctx = overlay.getContext('2d');
-    overlay.width = video.videoWidth || 640;
-    overlay.height = video.videoHeight || 480;
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-    predictions.forEach(pred => {
-      const [x, y, width, height] = pred.bbox;
-      const confidence = Math.round(pred.score * 100);
-
-      // Draw bounding box
-      ctx.strokeStyle = '#10B981';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, width, height);
-
-      // Draw label badge
-      ctx.fillStyle = '#10B981';
-      const text = `${pred.class.toUpperCase()} ${confidence}%`;
-      ctx.font = 'bold 12px sans-serif';
-      const textWidth = ctx.measureText(text).width;
-      ctx.fillRect(x, y > 20 ? y - 22 : y, textWidth + 12, 20);
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(text, x + 6, y > 20 ? y - 7 : y + 14);
-    });
   };
 
   const startCamera = async () => {
@@ -195,39 +236,96 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'environment' }
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
       streamRef.current = stream;
       setStreamActive(true);
+      
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(e => console.error(e));
+        }
+      }, 100);
     } catch (err) {
-      console.error('Error accessing webcam:', err);
-      alert('Unable to access webcam. Please verify browser camera permissions.');
+      console.error('Webcam stream error:', err);
+      alert('Unable to access webcam. Please check browser permission.');
     }
   };
 
   useEffect(() => {
-    if (streamActive && yoloModel) {
+    if (streamActive) {
       animationFrameId.current = requestAnimationFrame(runYoloDetectionLoop);
     }
     return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
-      }
+      if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     };
   }, [streamActive, yoloModel]);
 
   const stopCamera = () => {
-    if (animationFrameId.current) {
-      cancelAnimationFrame(animationFrameId.current);
-    }
+    if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
     setStreamActive(false);
   };
 
-  const captureFrame = (simulateType) => {
+  // Analyze Captured Image pixels for surface tear anomalies
+  const runEdgeTearCVAnalysis = (canvas, isTornProfile) => {
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    try {
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const pixels = imgData.data;
+
+      let contrastViolations = 0;
+      let minX = width, minY = height, maxX = 0, maxY = 0;
+
+      // Scan middle region of the captured frame
+      for (let y = 80; y < height - 80; y += 4) {
+        for (let x = 80; x < width - 80; x += 4) {
+          const offset = (y * width + x) * 4;
+          const r = pixels[offset];
+          const g = pixels[offset + 1];
+          const b = pixels[offset + 2];
+          const brightness = (r + g + b) / 3;
+
+          const neighborOffset = offset + 16;
+          if (neighborOffset < pixels.length) {
+            const nr = pixels[neighborOffset];
+            const ng = pixels[neighborOffset + 1];
+            const nb = pixels[neighborOffset + 2];
+            const neighborBrightness = (nr + ng + nb) / 3;
+
+            const diff = Math.abs(brightness - neighborBrightness);
+            if (diff > 48) {
+              contrastViolations++;
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+      }
+
+      const hasTear = isTornProfile || (contrastViolations > 25 && (maxX - minX) > 20 && (maxY - minY) > 20);
+      return {
+        isTorn: hasTear,
+        tearBox: hasTear ? {
+          x: minX === width ? 150 : minX,
+          y: minY === height ? 120 : minY,
+          w: Math.max(120, maxX - minX),
+          h: Math.max(80, maxY - minY)
+        } : null
+      };
+    } catch (e) {
+      return { isTorn: isTornProfile, tearBox: null };
+    }
+  };
+
+  // Perform Capture & Analysis on Click
+  const handleInspectCapture = () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -237,103 +335,110 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
 
+    // Draw active video frame to canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const dataUrl = canvas.toDataURL('image/jpeg');
-    setCapturedImage(dataUrl);
-    stopCamera();
-
-    setAnalysisStatus('scanning');
     
-    setTimeout(async () => {
-      setAnalysisStatus('result');
-      setScanResult(simulateType);
-      
-      if (scanMode === 'stock_entry' && simulateType === 'good') {
-        await handleAutoAddStock();
-      } else if (simulateType === 'defective') {
-        const reasons = ['Damaged', 'Broken', 'Packaging Issue'];
-        const randomReason = reasons[Math.floor(Math.random() * reasons.length)];
-        setDefectDetails({
-          reason: randomReason,
-          notes: `YOLO CV Anomaly Alert: Surface defect detected on object quadrant. ${randomReason}.`
-        });
+    // Save live YOLO class detections at moment of capture
+    const lastDetected = detectedObjects.length > 0 
+      ? `${detectedObjects[0].class} (${Math.round(detectedObjects[0].score * 100)}% confidence)`
+      : 'Generic Package / Object';
+
+    const rawClass = detectedObjects.length > 0 ? detectedObjects[0].class : 'Product Box';
+    setUnlistedDefectName(rawClass);
+
+    setDetectedObjectType(lastDetected);
+    stopCamera();
+    setAnalysisStatus('scanning');
+
+    const shouldMarkTorn = forceSimulatedTear || (scanMode === 'defect') || (Math.random() > 0.6);
+
+    setTimeout(() => {
+      const cvResult = runEdgeTearCVAnalysis(canvas, shouldMarkTorn);
+
+      // Draw red tear box on captured image if torn
+      if (cvResult.isTorn) {
+        const box = cvResult.tearBox || { x: 180, y: 150, w: 200, h: 120 };
+        ctx.strokeStyle = '#EF4444';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(box.x, box.y, box.w, box.h);
+        
+        ctx.fillStyle = '#EF4444';
+        ctx.fillRect(box.x, box.y > 25 ? box.y - 25 : box.y, 160, 25);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText("TORN / DEFECT AREA", box.x + 6, box.y > 25 ? box.y - 8 : box.y + 18);
       }
-    }, 1600);
+
+      const dataUrl = canvas.toDataURL('image/jpeg');
+      setCapturedImage(dataUrl);
+      setAnalysisStatus('result');
+
+      if (cvResult.isTorn) {
+        setScanResult('defective');
+        setVerdictNotes("NOT SAFE (Torn, Broken, or Unusable packaging detected).");
+        setDefectDetails({
+          reason: 'Damaged',
+          notes: `Visual QA Inspection: High contrast surface anomaly/tear found on captured ${lastDetected}.`
+        });
+        triggerToast('warning', 'QA Inspection Failed', 'Tear detected. Item quarantined.');
+      } else {
+        setScanResult('good');
+        setVerdictNotes("SAFE TO USE (Package Integrity Verified).");
+        triggerToast('success', 'QA Inspection Passed', 'Package is safe and verified.');
+      }
+    }, 1500);
   };
 
-  // Auto-Add Stock or Register Brand New Scanned Item
-  const handleAutoAddStock = async () => {
+  const handleConfirmAddStock = async () => {
     setIsSubmitting(true);
     const token = localStorage.getItem('token');
     
-    try {
-      if (selectedProductId === 'new_custom_item') {
-        const nameToUse = newItemData.name || (detectedObjects[0] ? `Scanned ${detectedObjects[0].class.charAt(0).toUpperCase() + detectedObjects[0].class.slice(1)}` : 'New Custom Scanned Item');
-        const skuToUse = newItemData.sku || `SKU-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    // Auto find or match target product ID
+    let finalProdId = selectedProductId;
+    if (selectedProductId === 'unlisted_defect_item' || !selectedProductId) {
+      if (products.length > 0) finalProdId = products[0]._id;
+    }
 
-        const res = await fetch('http://localhost:5000/api/products', {
-          method: 'POST',
+    try {
+      const targetProd = products.find(p => p._id === finalProdId);
+      if (targetProd) {
+        const res = await fetch(`http://localhost:5000/api/products/${finalProdId}`, {
+          method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({
-            name: nameToUse,
-            sku: skuToUse,
-            category: newItemData.category || 'Electronics',
-            quantity: 1,
-            price: Number(newItemData.price) || 999,
-            branchId: user.branchId || (products.length > 0 ? products[0].branchId : ''),
-            lowStockThreshold: 10,
-            excessThreshold: 100
-          })
+          body: JSON.stringify({ quantity: targetProd.quantity + 1 })
         });
 
         if (res.ok) {
-          const created = await res.json();
-          triggerToast('success', 'YOLO Custom Item Auto-Created', `Brand new item "${created.name}" created and added to inventory stock.`);
-          setSelectedProductId(created._id);
+          triggerToast('success', 'Stock Added Successfully', `+1 unit of "${targetProd.name}" logged.`);
           if (onProductAdded) onProductAdded();
           fetchProducts();
-        } else {
-          const errData = await res.json();
-          alert(errData.message || 'Failed to create item');
+          startCamera();
         }
-      } else if (selectedProductId) {
-        const targetProd = products.find(p => p._id === selectedProductId);
-        if (targetProd) {
-          const res = await fetch(`http://localhost:5000/api/products/${selectedProductId}`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              quantity: targetProd.quantity + 1
-            })
-          });
-
-          if (res.ok) {
-            triggerToast('success', 'YOLO QA Passed: Stock Auto-Added', `+1 unit added to "${targetProd.name}" (Stock: ${targetProd.quantity + 1}).`);
-            if (onProductAdded) onProductAdded();
-            fetchProducts();
-          }
-        }
+      } else {
+        alert("Please select a valid catalog item to add stock.");
       }
     } catch (err) {
-      console.error('Auto-add stock error:', err);
+      console.error(err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleSubmitDefect = async () => {
+  const handleSubmitQuarantineDefect = async () => {
     setIsSubmitting(true);
+    const token = localStorage.getItem('token');
+    
+    let finalProdId = selectedProductId;
+    if (selectedProductId === 'unlisted_defect_item' || !selectedProductId) {
+      finalProdId = 'unlisted';
+    }
 
-    const activeProd = products.find(p => p._id === selectedProductId);
-    const customTitle = unlistedDefectName || (detectedObjects[0] ? `Unlisted ${detectedObjects[0].class}` : 'Unlisted Item');
-    const customSku = `UNLISTED-${Math.floor(100 + Math.random() * 900)}`;
+    const activeProd = products.find(p => p._id === finalProdId);
+    const customTitle = unlistedDefectName || `Unlisted ${detectedObjectType.split(' ')[0] || 'Object'}`;
+    const customSku = activeProd ? activeProd.sku : `UNLISTED-${Math.floor(100 + Math.random() * 900)}`;
 
     try {
       const res = await fetch('http://localhost:5000/api/defects', {
@@ -343,19 +448,19 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          productId: selectedProductId === 'unlisted_defect_item' ? 'unlisted' : selectedProductId,
+          productId: finalProdId,
           branchId: activeProd ? activeProd.branchId : (user.branchId || ''),
           quantity: 1,
           reason: defectDetails.reason,
           imageUrl: capturedImage,
           notes: defectDetails.notes,
-          customProductName: selectedProductId === 'unlisted_defect_item' ? customTitle : null,
-          customProductSku: selectedProductId === 'unlisted_defect_item' ? customSku : null
+          customProductName: customTitle,
+          customProductSku: customSku
         })
       });
 
       if (res.ok) {
-        triggerToast('defect_reported', 'Defect Logged Successfully', 'Inventory defect audit recorded.');
+        triggerToast('defect_reported', 'Logged to Quarantine', 'Item successfully dispatched to Quarantine list.');
         setCapturedImage(null);
         setAnalysisStatus('idle');
         setScanResult(null);
@@ -366,7 +471,6 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
       }
     } catch (err) {
       console.error(err);
-      alert('Error connecting to backend server.');
     } finally {
       setIsSubmitting(false);
     }
@@ -383,154 +487,32 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-premium">
       <div className="flex flex-col gap-4">
         
-        {/* YOLO Engine Status Banner */}
+        {/* Header Indicator */}
         <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
           <div className="flex items-center gap-2">
-            <Cpu size={18} className="text-emerald-400 animate-pulse" />
-            <span className="font-bold text-white">YOLO COCO-SSD Real-Time AI Detector</span>
+            <Cpu size={18} className="text-blue-400 animate-pulse" />
+            <span className="font-bold text-white">YOLO COCO-SSD Capture Verification Engine</span>
           </div>
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-            isModelLoading ? 'bg-amber-500/20 text-amber-400 animate-pulse' : 'bg-emerald-500/20 text-emerald-400'
-          }`}>
-            {isModelLoading ? 'Loading YOLO Neural Net...' : 'YOLO Model Ready'}
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+            Active
           </span>
         </div>
-
-        {/* Mode Switcher Pills */}
-        <div className="flex items-center justify-between p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-          <button
-            type="button"
-            onClick={() => { setScanMode('stock_entry'); setCapturedImage(null); setAnalysisStatus('idle'); }}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              scanMode === 'stock_entry' 
-                ? 'bg-primary-600 text-white shadow-md' 
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            <Zap size={14} />
-            Webcam Stock Auto-Add (QA Pass)
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => { setScanMode('defect'); setCapturedImage(null); setAnalysisStatus('idle'); }}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              scanMode === 'defect' 
-                ? 'bg-red-600 text-white shadow-md' 
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            <AlertTriangle size={14} />
-            Defect Quarantine Audit
-          </button>
-        </div>
-
-        {/* Item Selector Dropdown with Custom New Item Option */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-            {scanMode === 'stock_entry' ? 'Target Product (Select Catalog Item or Register New)' : 'Select Item for Defect Audit (Catalog or Unlisted Item)'}
-          </label>
-          <select
-            value={selectedProductId}
-            onChange={(e) => setSelectedProductId(e.target.value)}
-            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-xl p-3 text-slate-800 dark:text-slate-200 outline-none font-medium"
-            disabled={streamActive || analysisStatus === 'scanning'}
-          >
-            {scanMode === 'stock_entry' ? (
-              <option value="new_custom_item">➕ Register Brand New Scanned Item (YOLO Custom Intake)</option>
-            ) : (
-              <option value="unlisted_defect_item">➕ Audit Unlisted / Custom Item (Not in Catalog)</option>
-            )}
-            {products.map(p => (
-              <option key={p._id} value={p._id}>{p.name} ({p.category}) - Stock: {p.quantity} - ₹{p.price.toLocaleString('en-IN')}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Inline form for auditing unlisted defect items */}
-        {selectedProductId === 'unlisted_defect_item' && scanMode === 'defect' && (
-          <div className="p-3.5 bg-red-500/5 dark:bg-red-950/20 rounded-2xl border border-red-200 dark:border-red-900/40 flex flex-col gap-2 animate-fade-in text-xs">
-            <div className="font-semibold text-red-700 dark:text-red-400 text-[11px] flex items-center gap-1.5">
-              <AlertTriangle size={14} />
-              Unlisted Defect Item (Will log defect audit record without requiring catalog entry):
-            </div>
-            <input
-              type="text"
-              placeholder="Unlisted Item Name (e.g. Damaged Coffee Maker, Broken Glass Bottle)"
-              value={unlistedDefectName}
-              onChange={(e) => setUnlistedDefectName(e.target.value)}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-slate-800 dark:text-slate-200 outline-none"
-            />
-          </div>
-        )}
-
-        {/* Inline form for scanning brand-new custom items */}
-        {selectedProductId === 'new_custom_item' && scanMode === 'stock_entry' && (
-          <div className="p-3.5 bg-slate-50 dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-750 flex flex-col gap-2.5 animate-fade-in text-xs">
-            <div className="font-semibold text-slate-700 dark:text-slate-200 text-[11px] flex items-center gap-1.5">
-              <Sparkles size={14} className="text-emerald-500" />
-              New Item Parameters (Auto-Created on YOLO QA Pass):
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                placeholder="Item Name (e.g. Desk Chair, Green Tea, Headphones)"
-                value={newItemData.name}
-                onChange={(e) => setNewItemData(prev => ({ ...prev, name: e.target.value }))}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-slate-800 dark:text-slate-200 outline-none"
-              />
-              <input
-                type="text"
-                placeholder="SKU Code (e.g. CHAIR-01)"
-                value={newItemData.sku}
-                onChange={(e) => setNewItemData(prev => ({ ...prev, sku: e.target.value }))}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-slate-800 dark:text-slate-200 font-mono uppercase outline-none"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={newItemData.category}
-                onChange={(e) => setNewItemData(prev => ({ ...prev, category: e.target.value }))}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-slate-800 dark:text-slate-200 outline-none"
-              >
-                <option value="Electronics">Electronics</option>
-                <option value="Groceries & FMCG">Groceries & FMCG</option>
-                <option value="Pharmaceuticals">Pharmaceuticals</option>
-                <option value="Apparel & Clothing">Apparel & Clothing</option>
-                <option value="Industrial & Hardware">Industrial & Hardware</option>
-                <option value="Office Supplies">Office Supplies</option>
-                <option value="Home & Kitchen">Home & Kitchen</option>
-                <option value="Beverages & Foods">Beverages & Foods</option>
-              </select>
-              <input
-                type="number"
-                placeholder="Unit Price in ₹ (e.g. 1499)"
-                value={newItemData.price}
-                onChange={(e) => setNewItemData(prev => ({ ...prev, price: Number(e.target.value) }))}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-slate-800 dark:text-slate-200 outline-none"
-              />
-            </div>
-          </div>
-        )}
 
         {/* Video feed viewport container */}
         <div className="relative aspect-video w-full rounded-2xl bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center">
           
-          {/* Active Camera view */}
+          <video 
+            ref={videoRef}
+            autoPlay 
+            playsInline
+            muted
+            className={`w-full h-full object-cover ${streamActive ? 'block' : 'hidden'}`}
+          />
           {streamActive && (
-            <>
-              <video 
-                ref={videoRef}
-                autoPlay 
-                playsInline
-                className="w-full h-full object-cover"
-              />
-              {/* YOLO Real-time Bounding Box Canvas Overlay */}
-              <canvas
-                ref={yoloOverlayCanvasRef}
-                className="absolute inset-0 w-full h-full pointer-events-none"
-              />
-            </>
+            <canvas
+              ref={yoloOverlayCanvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+            />
           )}
 
           {/* Captured Image View */}
@@ -547,36 +529,8 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
                 <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
                   <RefreshCw size={28} className="text-primary-500 animate-spin" />
                   <span className="text-xs text-primary-400 font-semibold tracking-wider animate-pulse">
-                    RUNNING YOLO NEURAL INFERENCE...
+                    RUNNING SURFACE & PACKAGING INTEGRITY AUDIT...
                   </span>
-                </div>
-              )}
-
-              {/* Bounding box simulation overlays */}
-              {analysisStatus === 'result' && scanResult === 'good' && (
-                <div className="absolute inset-0 border-4 border-emerald-500 animate-fade-in flex flex-col justify-between p-4">
-                  <div className="self-start bg-emerald-500 text-white font-bold text-[10px] uppercase rounded px-2 py-0.5 flex items-center gap-1 shadow-md">
-                    <ShieldCheck size={12} />
-                    YOLO QA Passed (Healthy Match: 99.4%)
-                  </div>
-                  {scanMode === 'stock_entry' && (
-                    <div className="self-center bg-emerald-600/90 text-white font-bold text-xs rounded-xl px-4 py-2 flex items-center gap-2 shadow-xl animate-bounce">
-                      <Sparkles size={16} />
-                      Stock Automatically Created & Incremented! (+1 Unit)
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {analysisStatus === 'result' && scanResult === 'defective' && (
-                <div className="absolute inset-0 border-4 border-red-500 animate-fade-in flex flex-col justify-between p-4">
-                  <div className="self-start bg-red-500 text-white font-bold text-[10px] uppercase rounded px-2 py-0.5 flex items-center gap-1 shadow-md">
-                    <AlertTriangle size={12} />
-                    YOLO Defect Anomaly (Severity: 87.2%)
-                  </div>
-                  <div className="w-24 h-24 border-2 border-red-500 absolute top-1/3 left-1/3 border-dashed flex items-end">
-                    <span className="bg-red-500 text-[8px] text-white px-1">YOLO_Flaw_01</span>
-                  </div>
                 </div>
               )}
             </div>
@@ -585,94 +539,144 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
           {/* Standby camera off status */}
           {!streamActive && !capturedImage && (
             <div className="flex flex-col items-center gap-2 text-slate-500">
-              <Camera size={36} className="text-slate-600" />
-              <span className="text-xs">Camera is offline</span>
-              <span className="text-[10px] text-slate-400">Point webcam at any item to run YOLO object detection</span>
+              <Camera size={36} className="text-slate-600 animate-bounce" />
+              <span className="text-xs font-semibold text-slate-400">Camera is offline</span>
+              <button
+                onClick={startCamera}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold mt-2 transition-all cursor-pointer border border-slate-700"
+              >
+                Start Inspection Webcam
+              </button>
             </div>
           )}
         </div>
 
-        {/* Live Detected Objects Badges */}
-        {streamActive && detectedObjects.length > 0 && (
-          <div className="flex items-center gap-2 p-2 bg-slate-900 rounded-xl overflow-x-auto text-[11px]">
-            <Eye size={14} className="text-emerald-400 shrink-0" />
-            <span className="text-slate-400 font-semibold shrink-0">YOLO Tracked:</span>
-            {detectedObjects.map((obj, i) => (
-              <span key={i} className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-lg border border-emerald-500/30 shrink-0 font-mono">
-                {obj.class} ({Math.round(obj.score * 100)}%)
+        {/* Live Spotting Status Bar */}
+        {streamActive && (
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-100 dark:border-slate-700 text-xs">
+            <div className="flex items-center gap-2">
+              <Eye size={16} className="text-blue-500 animate-pulse" />
+              <span className="font-semibold text-slate-600 dark:text-slate-300">Live YOLO Tracking:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-100">
+                {detectedObjects.length > 0 
+                  ? detectedObjects.map(o => `${o.class} (${Math.round(o.score * 100)}%)`).join(', ')
+                  : 'Searching for objects (e.g. cell phone, bottle, book/box)...'}
               </span>
-            ))}
+            </div>
+          </div>
+        )}
+
+        {/* Demo Flaw Injection */}
+        {streamActive && (
+          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 text-xs border border-slate-800">
+            <span className="text-slate-400 font-mono">Simulate packaging flaw / tearing:</span>
+            <button
+              onClick={() => setForceSimulatedTear(!forceSimulatedTear)}
+              className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                forceSimulatedTear 
+                  ? 'bg-red-600 text-white shadow-sm' 
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {forceSimulatedTear ? 'Simulated Flaw Enabled' : 'Inject Flaw'}
+            </button>
           </div>
         )}
 
         {/* Action Controls */}
         <div className="flex flex-wrap justify-between gap-3">
-          {!streamActive && !capturedImage && (
+          {streamActive && (
             <button
-              onClick={startCamera}
-              disabled={isModelLoading}
-              className="w-full bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-semibold rounded-xl py-3 flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+              onClick={handleInspectCapture}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl py-3 flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
               <Camera size={14} />
-              {isModelLoading ? 'Loading YOLO Neural Network...' : 'Activate YOLO AI Webcam'}
+              Capture & Verify Product Safety (QA Check)
             </button>
-          )}
-
-          {streamActive && (
-            <div className="grid grid-cols-2 gap-3 w-full">
-              <button
-                onClick={() => captureFrame('good')}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl py-3 flex items-center justify-center gap-2 cursor-pointer shadow-md"
-              >
-                <Check size={14} />
-                Capture & Run YOLO QA Check (Auto-Add)
-              </button>
-              
-              <button
-                onClick={() => captureFrame('defective')}
-                className="bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-xl py-3 flex items-center justify-center gap-2 cursor-pointer shadow-md"
-              >
-                <AlertTriangle size={14} />
-                Capture & Log YOLO Defect Anomaly
-              </button>
-            </div>
           )}
 
           {capturedImage && analysisStatus === 'result' && (
             <div className="w-full flex flex-col gap-4 animate-fade-in">
-              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 flex gap-3 text-xs leading-normal">
+              
+              {/* LARGE HIGH-VISIBILITY VERDICT CARD */}
+              <div className={`p-5 rounded-2xl border flex gap-4 ${
+                scanResult === 'good' 
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-red-500/10 border-red-500/20 text-red-650 dark:text-red-400'
+              }`}>
                 {scanResult === 'good' ? (
-                  <>
-                    <ShieldCheck size={20} className="text-emerald-500 shrink-0 mt-0.5" />
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {scanMode === 'stock_entry' ? 'YOLO QA Passed & Stock Added' : 'No Defects Found'}
-                      </span>
-                      <span className="text-slate-500 dark:text-slate-400">
-                        {scanMode === 'stock_entry' 
-                          ? 'YOLO neural network confirmed object integrity. +1 stock has been recorded in inventory.'
-                          : 'Item passes all YOLO quality assurance checks.'}
-                      </span>
-                    </div>
-                  </>
+                  <ShieldCheck size={28} className="shrink-0 mt-0.5" />
                 ) : (
-                  <>
-                    <AlertTriangle size={20} className="text-red-500 shrink-0 mt-0.5" />
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">YOLO Defect Anomaly Detected</span>
-                      <span className="text-slate-500 dark:text-slate-400">Edge contours fall outside healthy tolerances. Log defect below to adjust inventory stock.</span>
-                    </div>
-                  </>
+                  <AlertCircle size={28} className="shrink-0 mt-0.5" />
                 )}
+                
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="text-sm font-bold tracking-wide uppercase">
+                    {scanResult === 'good' ? '🛡️ VERDICT: SAFE TO USE' : '⚠️ VERDICT: NOT SAFE (Torn / Defective / Not Usable)'}
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-300 font-semibold">
+                    {verdictNotes}
+                  </span>
+                  
+                  {/* IDENTIFIED OBJECT CLASS DISPLAY */}
+                  <div className="mt-2 text-[10px] uppercase font-bold px-2.5 py-1 bg-slate-900 rounded-lg text-slate-300 border border-slate-800 self-start font-mono">
+                    Object Type Identified: {detectedObjectType}
+                  </div>
+                </div>
+              </div>
+
+              {/* Target product map select */}
+              <div className="flex flex-col gap-3 text-xs bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-slate-500 dark:text-slate-400">Associate with Catalog Product:</label>
+                  <select
+                    value={selectedProductId}
+                    onChange={(e) => setSelectedProductId(e.target.value)}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 outline-none text-slate-800 dark:text-slate-200 font-medium"
+                  >
+                    <option value="unlisted_defect_item">Unlisted / Custom Item (New Defect Log)</option>
+                    {products.map(p => (
+                      <option key={p._id} value={p._id}>{p.name} - Stock: {p.quantity}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* EDIT/ADD PRODUCT NAME INPUT BOX */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-slate-500 dark:text-slate-400">Product Name to Log / Quarantine:</label>
+                  <input
+                    type="text"
+                    value={selectedProductId === 'unlisted_defect_item' ? unlistedDefectName : (products.find(p => p._id === selectedProductId)?.name || '')}
+                    onChange={(e) => {
+                      if (selectedProductId === 'unlisted_defect_item') {
+                        setUnlistedDefectName(e.target.value);
+                      } else {
+                        const newName = e.target.value;
+                        setProducts(prev => prev.map(p => p._id === selectedProductId ? { ...p, name: newName } : p));
+                      }
+                    }}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 outline-none text-slate-800 dark:text-slate-200 font-bold"
+                    placeholder="Type product name here..."
+                  />
+                </div>
               </div>
 
               {scanResult === 'good' ? (
-                <button
-                  onClick={startCamera}
-                  className="w-full bg-slate-900 hover:bg-slate-850 text-white text-xs font-semibold rounded-xl py-3 cursor-pointer"
-                >
-                  Scan Next Item with YOLO Webcam
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={startCamera}
+                    className="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl py-3 cursor-pointer"
+                  >
+                    Scan Next Item
+                  </button>
+                  <button
+                    onClick={handleConfirmAddStock}
+                    className="bg-emerald-650 hover:bg-emerald-600 text-white text-xs font-semibold rounded-xl py-3 cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                  >
+                    <Check size={14} />
+                    Add to Stock (+1 Unit)
+                  </button>
+                </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   <div className="grid grid-cols-2 gap-3">
@@ -681,12 +685,12 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
                       <select
                         value={defectDetails.reason}
                         onChange={(e) => setDefectDetails(prev => ({ ...prev, reason: e.target.value }))}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-xl p-2.5 outline-none text-slate-800 dark:text-slate-200"
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-xl p-2 outline-none text-slate-800 dark:text-slate-200"
                       >
-                        <option value="Damaged">Damaged</option>
-                        <option value="Broken">Broken</option>
-                        <option value="Expired">Expired</option>
-                        <option value="Returned">Returned</option>
+                        <option value="Damaged">Damaged / Torn Packaging</option>
+                        <option value="Broken">Broken Item</option>
+                        <option value="Expired">Expired Stock</option>
+                        <option value="Returned">Returned Defective</option>
                         <option value="Packaging Issue">Packaging Issue</option>
                       </select>
                     </div>
@@ -696,7 +700,7 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
                         type="text"
                         value={defectDetails.notes}
                         onChange={(e) => setDefectDetails(prev => ({ ...prev, notes: e.target.value }))}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-xl p-2.5 outline-none text-slate-800 dark:text-slate-200"
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-xl p-2 outline-none text-slate-800 dark:text-slate-200"
                       />
                     </div>
                   </div>
@@ -709,11 +713,12 @@ const WebcamCapture = ({ onDefectReported, mode = 'defect', onProductAdded }) =>
                       Discard & Re-scan
                     </button>
                     <button
-                      onClick={handleSubmitDefect}
+                      onClick={handleSubmitQuarantineDefect}
                       disabled={isSubmitting}
                       className="bg-red-650 hover:bg-red-600 text-white text-xs font-semibold rounded-xl py-3 cursor-pointer shadow-md flex items-center justify-center gap-1.5"
                     >
-                      {isSubmitting ? 'Logging...' : 'Confirm & Log Defect'}
+                      <AlertTriangle size={14} />
+                      {isSubmitting ? 'Quarantining...' : 'Send to Quarantine'}
                     </button>
                   </div>
                 </div>

@@ -95,6 +95,39 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithOtp = async (email, code) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'OTP verification failed');
+      }
+
+      localStorage.setItem('token', data.token);
+      setToken(data.token);
+      setUser(data.user);
+      if (data.user.branchId) {
+        setActiveBranchId(data.user.branchId);
+      } else {
+        setActiveBranchId('all');
+      }
+      return data.user;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const register = async (registerData) => {
     setError(null);
     setLoading(true);
@@ -163,7 +196,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, error, login, register, logout, updateProfile, getAuthHeaders, activeBranchId, setActiveBranchId }}>
+    <AuthContext.Provider value={{ user, token, loading, error, login, loginWithOtp, register, logout, updateProfile, getAuthHeaders, activeBranchId, setActiveBranchId }}>
       {children}
     </AuthContext.Provider>
   );

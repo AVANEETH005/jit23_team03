@@ -15,7 +15,8 @@ import {
   Layers,
   Sparkles,
   Camera,
-  Zap
+  Zap,
+  Database
 } from 'lucide-react';
 
 const Products = () => {
@@ -59,6 +60,13 @@ const Products = () => {
   const [sourcingLoading, setSourcingLoading] = useState(false);
   const [transferQty, setTransferQty] = useState(1);
   const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
+
+  // Bulk Dataset Import States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importProducts, setImportProducts] = useState([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importTargetBranchId, setImportTargetBranchId] = useState('');
 
   // Broad categories for all item types
   const categoriesList = [
@@ -130,6 +138,126 @@ const Products = () => {
       isExcessShareable: false
     });
     setIsCrudModalOpen(true);
+  };
+
+  const handleCSVFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const lines = text.split(/\r?\n/);
+        if (lines.length <= 1) {
+          triggerToast('CSV file is empty or missing headers.', 'error');
+          return;
+        }
+
+        // Parse header row
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const parsedList = [];
+
+        // Check if required columns are present
+        const nameIdx = headers.indexOf('name');
+        const skuIdx = headers.indexOf('sku');
+        const categoryIdx = headers.indexOf('category');
+        const qtyIdx = headers.indexOf('quantity');
+        const priceIdx = headers.indexOf('price');
+        const supplierIdx = headers.indexOf('supplier');
+        const expiryIdx = headers.indexOf('expirydate');
+
+        if (nameIdx === -1 || skuIdx === -1 || categoryIdx === -1 || qtyIdx === -1 || priceIdx === -1) {
+          triggerToast('CSV must contain name, sku, category, quantity, price headers.', 'error');
+          return;
+        }
+
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+
+          // Split line by commas, supporting simple quotes
+          const columns = [];
+          let currentColumn = '';
+          let inQuotes = false;
+          for (let j = 0; j < line.length; j++) {
+            const char = line[j];
+            if (char === '"') {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              columns.push(currentColumn.trim());
+              currentColumn = '';
+            } else {
+              currentColumn += char;
+            }
+          }
+          columns.push(currentColumn.trim());
+
+          if (columns.length < 5) continue; // Skip malformed rows
+
+          parsedList.push({
+            name: columns[nameIdx],
+            sku: columns[skuIdx],
+            category: columns[categoryIdx],
+            quantity: Number(columns[qtyIdx] || 0),
+            price: Number(columns[priceIdx] || 0),
+            supplier: supplierIdx !== -1 ? columns[supplierIdx] : '',
+            expiryDate: expiryIdx !== -1 ? columns[expiryIdx] : ''
+          });
+        }
+
+        setImportProducts(parsedList);
+        triggerToast(`Parsed ${parsedList.length} products successfully!`, 'success');
+      } catch (err) {
+        console.error(err);
+        triggerToast('Failed to parse CSV file. Ensure format is correct.', 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleBulkImportSubmit = async () => {
+    if (importProducts.length === 0) {
+      triggerToast('No products selected for import.', 'error');
+      return;
+    }
+    if (!importTargetBranchId) {
+      triggerToast('Please select a target Warehouse/Branch.', 'error');
+      return;
+    }
+
+    setImportLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/products/bulk', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          products: importProducts,
+          branchId: importTargetBranchId
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast(data.message || 'Bulk products imported successfully!', 'success');
+        setIsImportModalOpen(false);
+        setImportProducts([]);
+        setImportFile(null);
+        // Refresh products list
+        fetchProducts();
+      } else {
+        triggerToast(data.message || 'Bulk import failed.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast('Network error during bulk import.', 'error');
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const handleOpenEdit = (product) => {
@@ -307,6 +435,19 @@ const Products = () => {
             <Zap size={13} className="text-amber-300" />
             Webcam Auto-Add Item
           </button>
+
+          {user.role !== 'staff' && (
+            <button
+              onClick={() => {
+                setImportTargetBranchId(user.branchId || (branches.length > 0 ? branches[0]._id : ''));
+                setIsImportModalOpen(true);
+              }}
+              className="bg-indigo-650 hover:bg-indigo-500 text-white text-xs font-semibold px-4.5 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md shadow-indigo-900/10"
+            >
+              <Database size={15} />
+              Import Dataset
+            </button>
+          )}
 
           {user.role !== 'staff' && (
             <button
@@ -798,6 +939,139 @@ const Products = () => {
 
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* BULK DATASET IMPORT MODAL */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in text-slate-100">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-6 relative shadow-2xl flex flex-col max-h-[85vh]">
+            <button
+              onClick={() => {
+                setIsImportModalOpen(false);
+                setImportProducts([]);
+                setImportFile(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white cursor-pointer h-7 w-7 rounded-lg hover:bg-slate-800 flex items-center justify-center transition-colors border-0 bg-transparent outline-none"
+            >
+              <X size={16} />
+            </button>
+
+            <div className="flex items-center gap-2 mb-4">
+              <Database className="text-primary-400" size={20} />
+              <h3 className="text-base font-bold tracking-tight text-white ml-1 font-sans">Import Product Dataset</h3>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-5 leading-normal">
+              Upload a `.csv` product list to bulk import inventory. The system will automatically perform a smart upsert: if the SKU already exists in the selected warehouse, the quantity will be added to the stock.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div className="flex flex-col gap-1.5 text-xs">
+                <label className="font-semibold text-slate-400 uppercase tracking-widest text-[9px]">Select Target Warehouse / Branch</label>
+                <select
+                  value={importTargetBranchId}
+                  onChange={(e) => setImportTargetBranchId(e.target.value)}
+                  className="bg-slate-950 border border-slate-850 rounded-xl px-3 py-2.5 outline-none text-slate-200"
+                >
+                  <option value="">-- Choose Warehouse --</option>
+                  {branches.map(b => (
+                    <option key={b._id} value={b._id}>{b.name} {b.isWarehouse ? '(HQ)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5 text-xs">
+                <label className="font-semibold text-slate-400 uppercase tracking-widest text-[9px]">Upload CSV File</label>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleCSVFileChange}
+                  className="bg-slate-950 border border-slate-850 rounded-xl px-3 py-2 outline-none text-slate-350"
+                />
+              </div>
+            </div>
+
+            {/* CSV Template Preview / Warning */}
+            {importProducts.length === 0 ? (
+              <div className="border border-dashed border-slate-800 rounded-2xl p-6 text-center text-xs text-slate-500 flex flex-col gap-2 my-2 bg-slate-950/20">
+                <span>CSV File Schema Requirement:</span>
+                <code className="bg-slate-950 p-2 rounded-lg font-mono text-[10px] text-slate-400 text-center select-all">
+                  name, sku, category, quantity, price, supplier, expirydate
+                </code>
+                <span className="text-[10px] mt-2 italic text-slate-650">Download a template or save your Excel sheet as a CSV file to import.</span>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col min-h-0 gap-2 my-2">
+                <div className="flex items-center justify-between text-xs px-1 text-slate-400">
+                  <span>Parsed <strong>{importProducts.length}</strong> items:</span>
+                  <button 
+                    onClick={() => {
+                      setImportProducts([]);
+                      setImportFile(null);
+                    }}
+                    className="text-red-400 hover:underline cursor-pointer bg-transparent border-0 outline-none"
+                  >
+                    Clear File
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950/40">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead>
+                      <tr className="bg-slate-950 sticky top-0 text-slate-500 uppercase tracking-wider font-bold border-b border-slate-850 text-[9px]">
+                        <th className="py-2.5 px-4">Name</th>
+                        <th className="py-2.5 px-3">SKU</th>
+                        <th className="py-2.5 px-3">Category</th>
+                        <th className="py-2.5 px-3 text-right">Qty</th>
+                        <th className="py-2.5 px-3 text-right">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850/60 text-slate-300">
+                      {importProducts.slice(0, 15).map((p, idx) => (
+                        <tr key={idx}>
+                          <td className="py-2 px-4 font-semibold text-white truncate max-w-[150px]">{p.name}</td>
+                          <td className="py-2 px-3 font-mono text-slate-400">{p.sku}</td>
+                          <td className="py-2 px-3">{p.category}</td>
+                          <td className="py-2 px-3 text-right font-bold text-emerald-450">{p.quantity}</td>
+                          <td className="py-2 px-3 text-right">₹{p.price}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {importProducts.length > 15 && (
+                    <div className="py-2 text-center text-[10px] text-slate-500 bg-slate-950/30 font-semibold uppercase tracking-wider border-t border-slate-850">
+                      + {importProducts.length - 15} more items parsed
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportProducts([]);
+                  setImportFile(null);
+                }}
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-750 text-white rounded-xl text-xs font-bold transition-all cursor-pointer text-center border-0 outline-none"
+              >
+                CANCEL
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBulkImportSubmit}
+                disabled={importLoading || importProducts.length === 0 || !importTargetBranchId}
+                className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-blue-900/10 disabled:opacity-50 border-0 outline-none"
+              >
+                {importLoading ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+                IMPORT TO WAREHOUSE
+              </button>
+            </div>
+
           </div>
         </div>
       )}

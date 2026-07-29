@@ -3,7 +3,7 @@ const { getModel } = require('../config/db');
 const NotificationSchema = {
   type: {
     type: String,
-    enum: ['low_stock', 'out_of_stock', 'expiry_soon', 'reorder_needed', 'demand_spike', 'transfer_request', 'defect_reported'],
+    enum: ['low_stock', 'out_of_stock', 'expiry_soon', 'reorder_needed', 'demand_spike', 'transfer_request', 'defect_reported', 'stock_alert'],
     required: true
   },
   title: { type: String, required: true },

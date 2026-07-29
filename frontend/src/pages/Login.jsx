@@ -46,13 +46,13 @@ const Login = () => {
 
       <div className="w-full max-w-md animate-fade-in z-10">
         
-        {/* Branding header */}
         <div className="flex flex-col items-center mb-6">
           <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-xl">
-            S
+            A
           </div>
-          <h1 className="text-xl font-bold text-white mt-3 font-sans">Smart Stock</h1>
-          <p className="text-xs text-slate-500 mt-1">Warehouse Intelligence System</p>
+          <span className="font-extrabold text-[10px] tracking-[0.25em] text-primary-400 uppercase font-mono mt-3 leading-none">AI-Driven</span>
+          <h1 className="text-lg font-black text-white mt-1 font-sans uppercase tracking-tight">Stock Intelligence</h1>
+          <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider text-center">Predictive Decision Support</p>
         </div>
 
         {/* Auth Glassmorphic Card */}

@@ -59,13 +59,13 @@ const Register = () => {
 
       <div className="w-full max-w-lg animate-fade-in z-10 my-8 overflow-y-auto max-h-[90vh]">
         
-        {/* Branding header */}
         <div className="flex flex-col items-center mb-6">
           <div className="h-11 w-11 rounded-xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-lg">
-            S
+            A
           </div>
-          <h1 className="text-lg font-bold text-white mt-3 font-sans">Smart Stock Registration</h1>
-          <p className="text-[11px] text-slate-500 mt-0.5">Provision Company or Join Existing Workspace</p>
+          <span className="font-extrabold text-[9px] tracking-[0.2em] text-primary-400 uppercase font-mono mt-3 leading-none">AI-Driven</span>
+          <h1 className="text-md font-black text-white mt-1 font-sans uppercase tracking-tight">Stock Intelligence Registration</h1>
+          <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider text-center">Predictive Decision Support</p>
         </div>
 
         {/* Register Glassmorphic Card */}

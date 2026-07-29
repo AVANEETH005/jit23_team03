@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -50,19 +50,20 @@ const Sidebar = () => {
         {/* Sidebar Brand header */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
           {!collapsed ? (
-            <div className="flex items-center gap-2 animate-fade-in">
-              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-lg">
-                S
+            <Link to="/home" className="flex items-center gap-2 animate-fade-in hover:opacity-80 transition-all">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-lg shrink-0">
+                A
               </div>
-              <div className="flex flex-col">
-                <span className="font-semibold text-sm leading-tight text-white font-sans">Smart Stock</span>
-                <span className="text-[10px] text-slate-400">Warehouse Intel</span>
+              <div className="flex flex-col text-left leading-none gap-0.5">
+                <span className="font-extrabold text-[8px] tracking-[0.18em] text-primary-400 uppercase font-mono">AI-Driven</span>
+                <span className="font-black text-[11px] tracking-tight text-white font-sans uppercase">Stock Intel</span>
+                <span className="text-[7.5px] text-slate-400 font-sans uppercase tracking-wider">Decision Support</span>
               </div>
-            </div>
+            </Link>
           ) : (
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-lg mx-auto">
-              S
-            </div>
+            <Link to="/home" className="h-9 w-9 rounded-xl bg-gradient-to-tr from-primary-600 to-primary-400 flex items-center justify-center shadow-lg font-bold text-white text-lg mx-auto hover:scale-105 transition-all">
+              A
+            </Link>
           )}
 
           {/* Collapse toggle button */}

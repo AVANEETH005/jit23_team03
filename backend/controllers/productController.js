@@ -298,3 +298,67 @@ exports.deleteProduct = async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error' });
   }
 };
+
+exports.bulkCreateProducts = async (req, res) => {
+  try {
+    const { products, branchId } = req.body;
+
+    if (!products || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ message: 'No products provided for import' });
+    }
+
+    if (!branchId) {
+      return res.status(400).json({ message: 'Please specify the target Warehouse/Branch for import' });
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    for (const item of products) {
+      const { name, sku, category, quantity, price, supplier, expiryDate, lowStockThreshold, excessThreshold, isExcessShareable } = item;
+
+      if (!name || !sku || !category) continue; // Skip invalid rows
+
+      // Check if product SKU already exists in this branch
+      let product = await Product.findOne({ sku: sku.trim(), branchId });
+
+      if (product) {
+        // Increment quantity (add to warehouse stock)
+        product.quantity += Number(quantity || 0);
+        if (price) product.price = Number(price);
+        if (category) product.category = category;
+        if (name) product.name = name;
+        if (supplier) product.supplier = supplier;
+        if (expiryDate) product.expiryDate = new Date(expiryDate).toISOString();
+        await product.save();
+        updatedCount++;
+      } else {
+        // Create new product
+        await Product.create({
+          name,
+          sku: sku.trim(),
+          category,
+          quantity: Number(quantity || 0),
+          price: Number(price || 0),
+          supplier: supplier || '',
+          expiryDate: expiryDate ? new Date(expiryDate).toISOString() : null,
+          branchId,
+          lowStockThreshold: lowStockThreshold !== undefined ? Number(lowStockThreshold) : 10,
+          excessThreshold: excessThreshold !== undefined ? Number(excessThreshold) : 100,
+          isExcessShareable: isExcessShareable || false
+        });
+        createdCount++;
+      }
+    }
+
+    res.json({
+      message: `Bulk import completed. Created ${createdCount} new products, updated ${updatedCount} existing products.`,
+      createdCount,
+      updatedCount
+    });
+
+  } catch (error) {
+    console.error('Bulk import error:', error);
+    res.status(500).json({ message: 'Internal Server Error during bulk import' });
+  }
+};

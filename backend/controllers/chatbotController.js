@@ -1,277 +1,319 @@
+const { GoogleGenAI } = require('@google/genai');
 const Product = require('../models/Product');
 const Branch = require('../models/Branch');
 const Defect = require('../models/Defect');
 const TransferRequest = require('../models/TransferRequest');
 const ChatLog = require('../models/ChatLog');
 
+// Initialize Gen AI client with robust API key cleaning
+const rawKey = process.env.GEMINI_API_KEY || '';
+let cleanKey = rawKey.trim();
+if (cleanKey.includes('GEMINI_API_KEY=')) {
+  cleanKey = cleanKey.split('GEMINI_API_KEY=')[0].trim();
+}
+cleanKey = cleanKey.replace(/[\s\r\n]/g, '');
+
+const ai = new GoogleGenAI({ apiKey: cleanKey });
+
 exports.askChatbot = async (req, res) => {
   try {
-    const { message } = req.body;
-    const { companyId, branchId, role, name: userName, id: userId } = req.user;
+    const { message, history } = req.body;
+    const { companyId, role, name: userName, id: userId } = req.user;
 
     if (!message) {
       return res.status(400).json({ message: 'Message is required' });
     }
 
-    const lowerMessage = message.toLowerCase().trim();
-
-    // Context scoping: get branches of the company
-    const companyBranches = await Branch.find({ companyId });
-    const companyBranchIds = companyBranches.map(b => b._id.toString());
-    const branchMap = {};
-    companyBranches.forEach(b => { branchMap[b._id.toString()] = b.name; });
-
-    let botResponse = "";
-    let intent = "general";
-    let pathAction = null;
-
-    // 1. Navigation intents
-    if (lowerMessage.includes('go to') || lowerMessage.includes('navigate') || lowerMessage.includes('show me') || lowerMessage.includes('take me to') || lowerMessage.includes('open')) {
-      intent = "navigation";
-      if (lowerMessage.includes('dashboard') || lowerMessage.includes('home') || lowerMessage.includes('stat')) {
-        botResponse = "Sure, routing you to the main dashboard analytics page.";
-        pathAction = "/";
-      } else if (lowerMessage.includes('product') || lowerMessage.includes('stock list') || lowerMessage.includes('inventory') || lowerMessage.includes('catalog')) {
-        botResponse = "Opening the Product Catalog page where you can manage items, search, and edit records.";
-        pathAction = "/products";
-      } else if (lowerMessage.includes('forecast') || lowerMessage.includes('prediction') || lowerMessage.includes('demand') || lowerMessage.includes('season')) {
-        botResponse = "Navigating to the Demand Forecasting & Predictive Reordering page.";
-        pathAction = "/forecasting";
-      } else if (lowerMessage.includes('defect') || lowerMessage.includes('fault') || lowerMessage.includes('damage') || lowerMessage.includes('webcam')) {
-        botResponse = "Routing you to the Defect Management and Webcam Fault Detection center.";
-        pathAction = "/defects";
-      } else if (lowerMessage.includes('branch') || lowerMessage.includes('warehouse')) {
-        botResponse = "Opening the Multi-Branch Management panel.";
-        pathAction = "/branches";
-      } else if (lowerMessage.includes('market') || lowerMessage.includes('exchange') || lowerMessage.includes('inter-company') || lowerMessage.includes('partner')) {
-        botResponse = "Routing you to the Inter-Company Goods Exchange Marketplace.";
-        pathAction = "/marketplace";
-      } else if (lowerMessage.includes('transfer') || lowerMessage.includes('request')) {
-        botResponse = "Opening the Internal Transfers history and requests tracking panel.";
-        pathAction = "/transfers";
-      } else if (lowerMessage.includes('report') || lowerMessage.includes('analytics file') || lowerMessage.includes('download')) {
-        botResponse = "Opening the Reports module. You can build and export custom reports here.";
-        pathAction = "/reports";
-      } else if (lowerMessage.includes('setting') || lowerMessage.includes('profile') || lowerMessage.includes('config')) {
-        botResponse = "Opening System Settings.";
-        pathAction = "/settings";
-      } else {
-        botResponse = "I support navigation shortcuts! You can ask me to open pages like: *Dashboard*, *Products*, *Forecasting*, *Defects*, *Branches*, *Marketplace*, *Transfers*, or *Reports*.";
-      }
-    } 
-
-    // 2. Specific Data Query Intents
-    
-    // 2a. Low stock or out of stock items
-    else if (lowerMessage.includes('low stock') || lowerMessage.includes('out of stock') || lowerMessage.includes('running out')) {
-      intent = "check_low_stock";
-      const products = await Product.find({ branchId: { $in: companyBranchIds } });
-      const outOfStockItems = products.filter(p => p.quantity === 0);
-      const lowStockItems = products.filter(p => p.quantity > 0 && p.quantity <= p.lowStockThreshold);
-
-      let responseLines = [];
-      if (outOfStockItems.length > 0) {
-        responseLines.push("**Out of Stock Items:**");
-        outOfStockItems.slice(0, 5).forEach(p => {
-          responseLines.push(`- ${p.name} (SKU: ${p.sku}) in ${branchMap[p.branchId] || 'Branch'}`);
-        });
-        if (outOfStockItems.length > 5) responseLines.push(`*...and ${outOfStockItems.length - 5} more items.*`);
-      }
-      
-      if (lowStockItems.length > 0) {
-        responseLines.push("\n**Low Stock Items:**");
-        lowStockItems.slice(0, 5).forEach(p => {
-          responseLines.push(`- ${p.name}: ${p.quantity} left (Threshold: ${p.lowStockThreshold}) in ${branchMap[p.branchId] || 'Branch'}`);
-        });
-        if (lowStockItems.length > 5) responseLines.push(`*...and ${lowStockItems.length - 5} more items.*`);
-      }
-
-      if (responseLines.length === 0) {
-        botResponse = "Great news! No products are currently out of stock or low on stock.";
-      } else {
-        botResponse = responseLines.join('\n');
-      }
+    if (!process.env.GEMINI_API_KEY) {
+      console.error('[CHATBOT ERROR] process.env.GEMINI_API_KEY is not defined!');
+      return res.status(200).json({
+        success: false,
+        reply: "Sorry, I couldn't reach the AI service. Please configure the GEMINI_API_KEY.",
+        source: "gemini"
+      });
     }
 
-    // 2b. Expiring soon items
-    else if (lowerMessage.includes('expire') || lowerMessage.includes('expiry') || lowerMessage.includes('spoiled')) {
-      intent = "check_expiry";
-      const products = await Product.find({ branchId: { $in: companyBranchIds } });
-      const today = new Date();
-      
-      const expired = [];
-      const expiringSoon = [];
+    // 1. Classify the user query intent using Gemini JSON Schema
+    const classifierPrompt = `
+You are an intent classifier for a Smart Stock Warehouse Inventory Management System.
+Analyze the user's current message and optional history, and decide if it requires querying the database or not.
 
-      products.forEach(p => {
-        if (!p.expiryDate) return;
-        const diffDays = Math.ceil((new Date(p.expiryDate) - today) / (1000 * 60 * 60 * 24));
-        if (diffDays < 0) {
-          expired.push(p);
-        } else if (diffDays <= 30) { // check within 30 days
-          expiringSoon.push({ product: p, days: diffDays });
+You must return a JSON object matching this schema:
+{
+  "intent": "query_db" | "general_knowledge",
+  "query_type": "all_products" | "low_stock" | "expiry" | "defects" | "transfers" | "newly_added" | "total_value" | "search_product" | "none",
+  "search_term": "string",
+  "source": "gemini" | "database" | "hybrid",
+  "pathAction": "/path" | null
+}
+
+Rules for "source":
+- Set "source" to "gemini" if the intent is "general_knowledge".
+- Set "source" to "database" if the query is a simple stock lookup, count, listing, or database query.
+- Set "source" to "hybrid" if the query is asking for suggestions, analysis, recommendations, or asking "why" based on database information.
+
+Rules for "pathAction" (only set if user explicitly requests page navigation, else null):
+- "/" for dashboard/statistics/home
+- "/products" for product catalog/list
+- "/forecasting" for demand forecasting/reorder suggestions
+- "/defects" for defect management/faults/camera scanner
+- "/branches" for branch management
+- "/transfers" for transfers tracking
+- "/reports" for reports center
+- "/settings" for system settings/profile
+
+Current User Message: "${message}"
+`;
+
+    let classification = {
+      intent: "general_knowledge",
+      query_type: "none",
+      search_term: "",
+      source: "gemini",
+      pathAction: null
+    };
+
+    try {
+      const responseClassifier = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: classifierPrompt,
+        config: {
+          responseMimeType: 'application/json'
         }
       });
 
-      let responseLines = [];
-      if (expired.length > 0) {
-        responseLines.push("**Expired Products (Needs immediate removal):**");
-        expired.slice(0, 5).forEach(p => {
-          responseLines.push(`- ${p.name} (SKU: ${p.sku}) - Expired on ${new Date(p.expiryDate).toLocaleDateString()} in ${branchMap[p.branchId]}`);
-        });
+      if (responseClassifier.text) {
+        classification = JSON.parse(responseClassifier.text);
       }
-
-      if (expiringSoon.length > 0) {
-        responseLines.push("\n**Expiring in next 30 Days (Priority Sales Recommended):**");
-        expiringSoon.slice(0, 5).forEach(item => {
-          responseLines.push(`- ${item.product.name} (SKU: ${item.product.sku}) - Expires in ${item.days} days (${new Date(item.product.expiryDate).toLocaleDateString()}) in ${branchMap[item.product.branchId]}`);
-        });
-      }
-
-      if (responseLines.length === 0) {
-        botResponse = "No expired or expiring products found in your inventory database.";
-      } else {
-        botResponse = responseLines.join('\n');
-      }
+    } catch (classifyErr) {
+      console.error('[CLASSIFIER ERROR] Intent detection failed, falling back to general_knowledge:', classifyErr);
     }
 
-    // 2c. Defective items
-    else if (lowerMessage.includes('defect') || lowerMessage.includes('damaged') || lowerMessage.includes('broken')) {
-      intent = "check_defects";
-      const defects = await Defect.find({ branchId: { $in: companyBranchIds }, status: 'Pending Review' });
-      const totalQty = defects.reduce((sum, d) => sum + d.quantity, 0);
+    // 2. Fetch data from MongoDB if intent is query_db
+    let dbResult = null;
+    if (classification.intent === 'query_db') {
+      try {
+        const companyBranches = await Branch.find({ companyId });
+        const companyBranchIds = companyBranches.map(b => b._id.toString());
+        const branchMap = {};
+        companyBranches.forEach(b => { branchMap[b._id.toString()] = b.name; });
 
-      if (totalQty === 0) {
-        botResponse = "There are no pending defective items requiring review in your branches.";
-      } else {
-        botResponse = `There are currently **${defects.length} defect reports** representing **${totalQty} defective items** awaiting administrative review. Use the Defects page to review details or open the webcam module.`;
-        pathAction = "/defects";
-      }
-    }
+        switch (classification.query_type) {
+          case 'all_products':
+            const allProd = await Product.find({ branchId: { $in: companyBranchIds } });
+            dbResult = allProd.map(p => ({
+              name: p.name,
+              sku: p.sku,
+              quantity: p.quantity,
+              price: p.price,
+              category: p.category,
+              branchName: branchMap[p.branchId] || 'Warehouse'
+            }));
+            break;
 
-    // 2d. Pending transfers
-    else if (lowerMessage.includes('pending transfer') || lowerMessage.includes('transfers') || lowerMessage.includes('exchange request')) {
-      intent = "check_transfers";
-      const pendingTransfers = await TransferRequest.find({
-        $or: [
-          { sourceCompanyId: companyId },
-          { targetCompanyId: companyId }
-        ],
-        status: 'pending'
-      });
-
-      if (pendingTransfers.length === 0) {
-        botResponse = "No pending stock transfers or inter-company goods exchange requests at this moment.";
-      } else {
-        botResponse = `There are **${pendingTransfers.length} pending transfer requests** matching your company. I can take you to the Transfer Center to review them.`;
-        pathAction = "/transfers";
-      }
-    }
-
-    // 2e. Reorder suggestions
-    else if (lowerMessage.includes('reorder') || lowerMessage.includes('restock') || lowerMessage.includes('suggest')) {
-      intent = "check_reorders";
-      const products = await Product.find({ branchId: { $in: companyBranchIds } });
-      const suggestions = [];
-
-      products.forEach(p => {
-        if (p.quantity <= p.lowStockThreshold) {
-          const qty = Math.max(20, p.lowStockThreshold * 3 - p.quantity);
-          suggestions.push(`- **${p.name}** (SKU: ${p.sku}) in ${branchMap[p.branchId]}: Suggest ordering **${qty} units** from ${p.supplier || 'supplier'}.`);
-        }
-      });
-
-      if (suggestions.length === 0) {
-        botResponse = "Inventory levels are healthy! No automated reorder suggestions generated.";
-      } else {
-        botResponse = "**Predictive Reorder Recommendations:**\n" + suggestions.slice(0, 5).join('\n') + "\n\nNavigate to *Forecasting* to see timeline schedules.";
-        pathAction = "/forecasting";
-      }
-    }
-
-    // 2f. Generic search query for products (e.g. "How many laptops available?", "Which branch has paracetamol?")
-    else {
-      // Extract words to find matching items
-      const words = lowerMessage.split(/\s+/);
-      // Remove common stop words
-      const stopWords = ['how', 'many', 'much', 'is', 'are', 'available', 'which', 'branch', 'has', 'have', 'do', 'we', 'in', 'stock', 'the', 'of', 'for', 'laptops', 'laptops?'];
-      const searchTerms = words.filter(w => !stopWords.includes(w) && w.length > 2).map(w => w.replace(/[?.,!]/g, ''));
-
-      let matchedProduct = null;
-      if (searchTerms.length > 0) {
-        // Query database for products matching terms
-        const queryTerm = searchTerms[0];
-        // Match product name, SKU, or category
-        const matchProducts = await Product.find({
-          branchId: { $in: companyBranchIds },
-          $or: [
-            { name: { $regex: queryTerm, $options: 'i' } },
-            { category: { $regex: queryTerm, $options: 'i' } }
-          ]
-        });
-
-        if (matchProducts.length > 0) {
-          intent = "search_product";
-          // Group by name and aggregate quantities across branches
-          const productSummary = {};
-          matchProducts.forEach(p => {
-            if (!productSummary[p.name]) {
-              productSummary[p.name] = {
+          case 'low_stock':
+            const lowProd = await Product.find({ branchId: { $in: companyBranchIds } });
+            dbResult = lowProd
+              .filter(p => p.quantity <= (p.lowStockThreshold || 5))
+              .map(p => ({
+                name: p.name,
                 sku: p.sku,
-                totalQty: 0,
-                branches: []
-              };
+                quantity: p.quantity,
+                lowStockThreshold: p.lowStockThreshold,
+                branchName: branchMap[p.branchId] || 'Warehouse'
+              }));
+            break;
+
+          case 'expiry':
+            const expProd = await Product.find({ branchId: { $in: companyBranchIds } });
+            const today = new Date();
+            dbResult = expProd
+              .filter(p => p.expiryDate)
+              .map(p => {
+                const diffDays = Math.ceil((new Date(p.expiryDate) - today) / (1000 * 60 * 60 * 24));
+                return {
+                  name: p.name,
+                  sku: p.sku,
+                  expiryDate: p.expiryDate,
+                  daysUntilExpiry: diffDays,
+                  branchName: branchMap[p.branchId] || 'Warehouse'
+                };
+              })
+              .filter(p => p.daysUntilExpiry <= 30);
+            break;
+
+          case 'defects':
+            const defects = await Defect.find({ branchId: { $in: companyBranchIds } });
+            dbResult = defects.map(d => ({
+              productName: d.productName || 'Unlisted Item',
+              productSku: d.productSku || 'UNLISTED',
+              quantity: d.quantity,
+              reason: d.reason,
+              status: d.status,
+              severity: d.severity,
+              rackNumber: d.rackNumber,
+              warehouse: d.warehouse,
+              category: d.category
+            }));
+            break;
+
+          case 'transfers':
+            const transfers = await TransferRequest.find({
+              $or: [
+                { sourceCompanyId: companyId },
+                { targetCompanyId: companyId }
+              ]
+            });
+            dbResult = transfers.map(t => ({
+              id: t._id.toString(),
+              sourceBranchName: branchMap[t.sourceBranchId] || 'Branch A',
+              targetBranchName: branchMap[t.targetBranchId] || 'Branch B',
+              status: t.status,
+              type: t.type,
+              items: t.items || [],
+              createdAt: t.createdAt
+            }));
+            break;
+
+          case 'newly_added':
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const newProd = await Product.find({
+              branchId: { $in: companyBranchIds },
+              createdAt: { $gte: startOfToday }
+            });
+            dbResult = newProd.map(p => ({
+              name: p.name,
+              sku: p.sku,
+              quantity: p.quantity,
+              category: p.category,
+              branchName: branchMap[p.branchId] || 'Warehouse'
+            }));
+            break;
+
+          case 'total_value':
+            const valProd = await Product.find({ branchId: { $in: companyBranchIds } });
+            let totalVal = 0;
+            let totalCount = 0;
+            valProd.forEach(p => {
+              totalVal += (p.price || 0) * (p.quantity || 0);
+              totalCount += (p.quantity || 0);
+            });
+            dbResult = {
+              totalInventoryValue: totalVal,
+              totalStoredItemsCount: totalCount,
+              currency: 'INR'
+            };
+            break;
+
+          case 'search_product':
+            const term = classification.search_term || '';
+            const query = { branchId: { $in: companyBranchIds } };
+            
+            if (term.match(/^[0-9a-fA-F]{24}$/)) {
+              query._id = term;
+            } else {
+              query.$or = [
+                { name: { $regex: term, $options: 'i' } },
+                { sku: { $regex: term, $options: 'i' } },
+                { category: { $regex: term, $options: 'i' } }
+              ];
             }
-            productSummary[p.name].totalQty += p.quantity;
-            productSummary[p.name].branches.push({
-              branchName: branchMap[p.branchId] || 'Branch',
-              qty: p.quantity
-            });
-          });
+            const matchProducts = await Product.find(query);
+            dbResult = matchProducts.map(p => ({
+              name: p.name,
+              sku: p.sku,
+              quantity: p.quantity,
+              price: p.price,
+              category: p.category,
+              branchName: branchMap[p.branchId] || 'Warehouse',
+              lowStockThreshold: p.lowStockThreshold
+            }));
+            break;
 
-          let lines = ["**Search Query Results:**"];
-          for (let name in productSummary) {
-            const summary = productSummary[name];
-            lines.push(`- **${name}** (SKU: ${summary.sku}): **${summary.totalQty} total units** available.`);
-            summary.branches.forEach(b => {
-              lines.push(`  * ${b.branchName}: ${b.qty} units`);
-            });
-          }
-          botResponse = lines.join('\n');
+          default:
+            dbResult = [];
         }
-      }
-
-      // Default fallback if no pattern matched
-      if (!botResponse) {
-        botResponse = `Hello ${userName}! I am the Smart Stock Intelligence Assistant. I am linked to your live database. 
-
-You can ask me questions such as:
-- *"Which items are low stock?"*
-- *"Show reorder suggestions"*
-- *"What products expire soon?"*
-- *"Are there any pending transfers?"*
-- *"How many [Product Name] do we have?"*
-
-I can also route pages for you. Try asking: *"Take me to the defects page."*`;
+      } catch (dbErr) {
+        console.error('[MONGO ERROR] Failed to query database context:', dbErr);
+        return res.status(200).json({
+          success: false,
+          reply: "Unable to retrieve inventory data.",
+          source: "database"
+        });
       }
     }
 
-    // Save Chat Log
-    await ChatLog.create({
-      userId: userId.toString(),
-      userName,
-      userMessage: message,
-      botResponse,
-      intent,
-      pathAction
-    });
+    // 3. Assemble chat contents history list for session memory
+    const contents = [];
+    if (Array.isArray(history) && history.length > 0) {
+      // Crop history to last 15 messages to conserve prompt tokens
+      const recentHistory = history.slice(-15);
+      recentHistory.forEach(msg => {
+        if (msg.sender === 'user') {
+          contents.push({ role: 'user', parts: [{ text: msg.text }] });
+        } else if (msg.sender === 'bot') {
+          contents.push({ role: 'model', parts: [{ text: msg.text }] });
+        }
+      });
+    }
 
+    // Append context to final turn if database was queried
+    if (classification.intent === 'query_db') {
+      const contextMessage = `
+[SYSTEM CONTEXT: The user is asking about live inventory/warehouse records. Querying MongoDB retrieved the following database records. DO NOT invent or assume any inventory records that are not in this list. If the list is empty, state that no matching products/records were found in the database. Use this data along with your general knowledge to answer the user's question naturally.]
+
+DATABASE RECORDS RETRIEVED:
+${JSON.stringify(dbResult, null, 2)}
+
+USER QUERY: "${message}"
+`;
+      contents.push({ role: 'user', parts: [{ text: contextMessage }] });
+    } else {
+      contents.push({ role: 'user', parts: [{ text: message }] });
+    }
+
+    // 4. Generate Final Response using Gemini
+    let replyText = "";
+    try {
+      const chatResponse = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: contents
+      });
+      replyText = chatResponse.text || "Sorry, I couldn't process that query.";
+    } catch (geminiErr) {
+      console.error('[GEMINI ERROR] Text generation failed:', geminiErr);
+      return res.status(200).json({
+        success: false,
+        reply: "Sorry, I couldn't reach the AI service. Please try again.",
+        source: "gemini"
+      });
+    }
+
+    // 5. Log chat to Database
+    try {
+      await ChatLog.create({
+        userId: userId.toString(),
+        userName,
+        userMessage: message,
+        botResponse: replyText,
+        intent: classification.intent,
+        pathAction: classification.pathAction || null
+      });
+    } catch (logErr) {
+      console.error('[DB WARN] Failed to log chat event:', logErr);
+    }
+
+    // 6. Return response matching requested format
     res.json({
-      message: botResponse,
-      action: pathAction
+      success: true,
+      reply: replyText,
+      source: classification.source,
+      action: classification.pathAction || null
     });
 
   } catch (error) {
-    console.error('Chatbot error:', error);
+    console.error('Chatbot Controller Crash:', error);
     res.status(500).json({ message: 'Internal Server Error' });
   }
 };

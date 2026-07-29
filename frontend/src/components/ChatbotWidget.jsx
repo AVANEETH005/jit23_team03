@@ -12,7 +12,7 @@ const ChatbotWidget = () => {
     {
       id: 'welcome',
       sender: 'bot',
-      text: 'Hello! I am your Smart Stock Intelligence assistant. Ask me anything about stock counts, low stock items, expiry dates, or pending transfers. You can also use voice commands!',
+      text: 'Hello! I am your AI-Driven Stock Intelligence assistant. Ask me anything about stock counts, low stock items, expiry dates, or pending transfers. You can also use voice commands!',
       time: new Date()
     }
   ]);
@@ -107,7 +107,10 @@ const ChatbotWidget = () => {
       text,
       time: new Date()
     };
-    setMessages(prev => [...prev, userMsg]);
+    
+    // Save current message + history to pass to backend
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
     setIsTyping(true);
 
     try {
@@ -117,23 +120,33 @@ const ChatbotWidget = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ 
+          message: text,
+          history: updatedMessages 
+        })
       });
 
       if (res.ok) {
         const data = await res.json();
         
+        // Handle error responses from backend
+        let replyText = data.reply;
+        if (!data.success) {
+          replyText = data.reply || 'Sorry, I couldn\'t reach the AI service. Please try again.';
+        }
+
         // Push Bot response
         const botMsg = {
           id: Math.random().toString(36).substring(2, 9),
           sender: 'bot',
-          text: data.message,
+          text: replyText,
+          source: data.source || 'gemini',
           action: data.action,
           time: new Date()
         };
         
         setMessages(prev => [...prev, botMsg]);
-        speakText(data.message);
+        speakText(replyText);
 
         // If the bot triggered a navigation page action
         if (data.action) {
@@ -148,10 +161,18 @@ const ChatbotWidget = () => {
       }
     } catch (err) {
       console.error(err);
+      
+      // Determine correct fallback message based on standard errors
+      let fallbackText = 'Sorry, I couldn\'t reach the AI service. Please try again.';
+      if (err.message && err.message.toLowerCase().includes('database')) {
+        fallbackText = 'Unable to retrieve inventory data.';
+      }
+      
       setMessages(prev => [...prev, {
         id: 'err',
         sender: 'bot',
-        text: 'Sorry, I am having trouble connecting to the database server right now.',
+        text: fallbackText,
+        source: 'gemini',
         time: new Date()
       }]);
     } finally {
@@ -285,6 +306,15 @@ const ChatbotWidget = () => {
                 <div className="flex flex-col gap-1">
                   <div className={`p-3 rounded-2xl ${msg.sender === 'user' ? 'bg-primary-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-100 rounded-tl-none border border-slate-750'}`}>
                     {formatText(msg.text)}
+                    
+                    {msg.source && (
+                      <div className="mt-2.5 pt-1.5 border-t border-slate-700/50 flex items-center justify-between text-[9px] text-slate-400 font-mono tracking-wider">
+                        <span>SOURCE: {msg.source.toUpperCase()}</span>
+                        {msg.source === 'database' && <span className="text-emerald-400 font-bold flex items-center gap-1">⚡ Live MongoDB</span>}
+                        {msg.source === 'gemini' && <span className="text-blue-400 font-bold flex items-center gap-1">✨ Gemini AI</span>}
+                        {msg.source === 'hybrid' && <span className="text-purple-400 font-bold flex items-center gap-1">🚀 AI + Data</span>}
+                      </div>
+                    )}
                     
                     {msg.action && (
                       <div className="mt-2 pt-1 border-t border-slate-700/50 flex items-center gap-1 text-[10px] text-primary-300 font-semibold uppercase tracking-wider animate-pulse">

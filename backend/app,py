@@ -1,0 +1,7 @@
+from ultralytics import YOLO
+
+#load a model
+model = YOLO("yolov8n.pt")  # load a pretrained model (recommended for training)
+
+print(model.info())
+print(model.names)    # print model summary

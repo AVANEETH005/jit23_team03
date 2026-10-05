@@ -211,7 +211,7 @@ exports.getTransfers = async (req, res) => {
       const tCompany = await Company.findById(t.targetCompanyId);
 
       enrichedTransfers.push({
-        ...t,
+        ...t.toObject(),
         sourceBranchName: sBranch ? sBranch.name : 'Unknown Branch',
         targetBranchName: tBranch ? tBranch.name : 'Unknown Branch',
         sourceCompanyName: sCompany ? sCompany.name : 'Unknown Company',

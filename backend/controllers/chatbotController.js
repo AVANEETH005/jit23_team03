@@ -75,7 +75,7 @@ Current User Message: "${message}"
 
     try {
       const responseClassifier = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.6-flash',
         contents: classifierPrompt,
         config: {
           responseMimeType: 'application/json'
@@ -277,7 +277,7 @@ USER QUERY: "${message}"
     let replyText = "";
     try {
       const chatResponse = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.6-flash',
         contents: contents
       });
       replyText = chatResponse.text || "Sorry, I couldn't process that query.";

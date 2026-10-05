@@ -25,7 +25,7 @@ app.add_middleware(
 # -----------------------------------------------------------------
 # 2. Config & Class Mapping Filters
 # -----------------------------------------------------------------
-CONFIDENCE_THRESHOLD = 0.70
+CONFIDENCE_THRESHOLD = 0.35
 
 # Clean custom list of valid products
 VALID_PRODUCTS = [
@@ -40,20 +40,25 @@ COCO_CLASS_MAP = {
     "laptop": "Laptop",
     "keyboard": "Keyboard",
     "mouse": "Mouse",
+    "remote": "Remote",
+    "vase": "Mouse",   # Flared ergonomic gaming mice resemble COCO vase class
+    "tie": "Mouse",    # Cable and tapered mouse profile
     "book": "Book",
     "scissors": "Scissors",
     "cup": "Cup",
-    "remote": "Remote",
     "tv": "Monitor"
 }
 
-# Load YOLOv11 model (attempts yolov11n.pt or custom best.pt weights if present)
-weights_path = "best.pt" if os.path.exists("best.pt") else "yolov8n.pt"
-print(f"[YOLOv11 SERVER] Loading model weights from: {weights_path}")
+# Load YOLO model (attempts yolov11n.pt or custom best.pt weights if present)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+weights_path = os.path.join(script_dir, "best.pt") if os.path.exists(os.path.join(script_dir, "best.pt")) else (
+    os.path.join(script_dir, "yolov8n.pt") if os.path.exists(os.path.join(script_dir, "yolov8n.pt")) else "yolov8n.pt"
+)
+print(f"[YOLO SERVER] Loading model weights from: {weights_path}")
 try:
     model = YOLO(weights_path)
 except Exception as e:
-    print(f"[YOLOv11 SERVER] Failed to load {weights_path}, falling back to yolov8n.pt: {e}")
+    print(f"[YOLO SERVER] Failed to load {weights_path}, falling back to yolov8n.pt: {e}")
     model = YOLO("yolov8n.pt")
 
 # -----------------------------------------------------------------
@@ -265,6 +270,8 @@ async def detect_frame(payload: FramePayload):
 
         return {"predictions": predictions}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[API ERROR] Frame classification failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
